@@ -1,0 +1,48 @@
+# Waypoints configuration for path following
+# Each waypoint is defined as [x, y] in meters (ENU/world frame)
+
+waypoints:
+  # Sinusoidal wave path - smooth wave pattern
+  - [0.0, 0.0]
+  - [5.0, 3.0]
+  - [10.0, 0.0]
+  - [15.0, -3.0]
+  - [20.0, 0.0]
+  - [25.0, 3.0]
+  - [30.0, 0.0]
+  - [35.0, -3.0]
+  - [40.0, 0.0]
+  - [45.0, 3.0]
+  - [50.0, 0.0]
+
+# Alternative paths (uncomment to use):
+
+# Simple straight path:
+# waypoints:
+#   - [0.0, 0.0]
+#   - [10.0, 0.0]
+#   - [20.0, 0.0]
+#   - [30.0, 0.0]
+
+# S-curve wave:
+# waypoints:
+#   - [0.0, 0.0]
+#   - [10.0, 5.0]
+#   - [20.0, 5.0]
+#   - [30.0, 0.0]
+#   - [40.0, -5.0]
+#   - [50.0, -5.0]
+#   - [60.0, 0.0]
+
+# Path interpolation settings
+path_settings:
+  # Interpolation method: 'linear', 'cubic', or 'bspline'
+  # Use 'cubic' for smooth waves
+  interpolation: 'cubic'
+  
+  # Number of interpolation points between waypoints (for smooth curves)
+  # Higher values = smoother wave
+  resolution: 50
+  
+  # Whether to close the path (make it a loop)
+  closed_path: false

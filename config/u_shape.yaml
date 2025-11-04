@@ -1,0 +1,28 @@
+# U-shaped path configuration
+# Simple U-turn path with 9 waypoints
+
+waypoints:
+  # Start of U - bottom left
+  - [0.0, 0.0]
+  - [0.0, 5.0]
+  - [0.0, 10.0]
+  
+  # Top of U - transition to right side
+  - [2.5, 12.5]
+  - [5.0, 15.0]
+  - [7.5, 12.5]
+  
+  # Right side of U - going down
+  - [10.0, 10.0]
+  - [10.0, 5.0]
+  - [10.0, 0.0]
+
+path_settings:
+  # Interpolation method: 'linear', 'cubic', or 'bspline'
+  interpolation: 'cubic'
+  
+  # Number of interpolation points between waypoints (for smooth curves)
+  resolution: 50
+  
+  # Whether to close the path (make it a loop)
+  closed_path: false

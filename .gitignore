@@ -1,0 +1,22 @@
+# Ignore all markdown files
+*.md
+
+# But keep README.md
+!README.md
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Pytest cache
+.pytest_cache/
+
+# IDE files
+.vscode/
+.idea/
+
+# ROS build artifacts
+install/
+log/
+build/
