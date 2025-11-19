@@ -32,6 +32,9 @@ class MainController(Node):
         # Publisher for waypoints (for simulator visualization)
         self.waypoints_pub = self.create_publisher(Float64MultiArray, '/waypoints', 10)
 
+        # Add publisher for v_ref (for live plotter)
+        self.v_ref_pub = self.create_publisher(Float64MultiArray, '/modular_controller/v_ref', 10)
+
         # Control loop timer (10 Hz)
         self.timer = self.create_timer(0.1, self.control_loop)
 
@@ -231,6 +234,12 @@ class MainController(Node):
         # 7. Publish directly to thruster topics
         self.left_pub.publish(Float64(data=float(T_left)))
         self.right_pub.publish(Float64(data=float(T_right)))
+
+        # After computing v_ref from LOS:
+        # Publish v_ref for visualization
+        v_ref_msg = Float64MultiArray()
+        v_ref_msg.data = [float(v_ref[0]), float(v_ref[1])]
+        self.v_ref_pub.publish(v_ref_msg)
 
         # Logging
         self.get_logger().info(

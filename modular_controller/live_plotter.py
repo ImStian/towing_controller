@@ -23,43 +23,73 @@ class LivePlotter(Node):
         self.declare_parameter('asv_odom_topic', '/model/blueboat/odometry')
         self.declare_parameter('towfish_odom_topic', '/model/bluerov2_heavy/odometry')
         self.declare_parameter('waypoints_topic', '/waypoints')
+        self.declare_parameter('v_ref_topic', '/modular_controller/v_ref')  # New
         self.declare_parameter('history_length', 5000)
         self.declare_parameter('update_rate_hz', 20)
         self.declare_parameter('show_tether', True)
         self.declare_parameter('show_boat_shape', True)
+        self.declare_parameter('show_velocity_plot', True)  # New
+        self.declare_parameter('tether_length', 3.5)  # MRAC parameter
+        self.declare_parameter('epsilon', 0.7)  # MRAC parameter
         
         asv_topic = self.get_parameter('asv_odom_topic').value
         towfish_topic = self.get_parameter('towfish_odom_topic').value
         waypoints_topic = self.get_parameter('waypoints_topic').value
+        v_ref_topic = self.get_parameter('v_ref_topic').value
         history_len = self.get_parameter('history_length').value
         update_rate = self.get_parameter('update_rate_hz').value
         self.show_tether = self.get_parameter('show_tether').value
         self.show_boat = self.get_parameter('show_boat_shape').value
+        self.show_vel_plot = self.get_parameter('show_velocity_plot').value
+        
+        # MRAC parameters for tracking point calculation
+        self.L = self.get_parameter('tether_length').value
+        self.epsilon = self.get_parameter('epsilon').value
         
         # State
         self.asv_pos = None
         self.asv_heading = None
+        self.asv_vel = None
         self.towfish_pos = None
+        self.towfish_vel = None  # New
+        self.v_ref = None  # New
         self.path_points = None
+        self.current_time = 0.0
+        self.prev_theta = None  # For theta_dot calculation
+        self.prev_time = None  # For dt calculation
+        self.tracking_point_vel = None  # Computed tracking point velocity
         
         # History
         self.asv_history = deque(maxlen=history_len)
         self.towfish_history = deque(maxlen=history_len)
+        self.time_history = deque(maxlen=history_len)  # New
+        self.v_ref_history = deque(maxlen=history_len)  # New
+        self.tracking_vel_history = deque(maxlen=history_len)  # Tracking point velocity
         
         # Subscribers
         self.create_subscription(Odometry, asv_topic, self.asv_callback, 10)
         self.create_subscription(Odometry, towfish_topic, self.towfish_callback, 10)
         self.create_subscription(Float64MultiArray, waypoints_topic, self.waypoints_callback, 10)
+        self.create_subscription(Float64MultiArray, v_ref_topic, self.v_ref_callback, 10)  # New
         
-        # Setup matplotlib
+        # Setup matplotlib with subplots
         plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=(12, 10))
+        if self.show_vel_plot:
+            self.fig = plt.figure(figsize=(16, 10))
+            # 2x2 grid: trajectory takes entire first row, velocity plots on second row
+            self.ax_traj = plt.subplot2grid((2, 2), (0, 0), colspan=2)
+            self.ax_vel_y = plt.subplot2grid((2, 2), (1, 0))  # North velocity (left)
+            self.ax_vel_x = plt.subplot2grid((2, 2), (1, 1))  # East velocity (right)
+        else:
+            self.fig, self.ax_traj = plt.subplots(figsize=(12, 10))
+            self.ax_vel_x = None
+            self.ax_vel_y = None
         
-        # Plot elements
-        self.path_line, = self.ax.plot([], [], 'k--', lw=1.0, label='Reference Path', alpha=0.5)
-        self.asv_trail, = self.ax.plot([], [], 'b-', lw=1.5, label='ASV Trail', alpha=0.7)
-        self.towfish_trail, = self.ax.plot([], [], 'r-', lw=1.5, label='Towfish Trail', alpha=0.7)
-        self.tether_line, = self.ax.plot([], [], 'gray', lw=2, linestyle=':', alpha=0.6, label='Tether')
+        # === TRAJECTORY PLOT ===
+        self.path_line, = self.ax_traj.plot([], [], 'k--', lw=1.0, label='Reference Path', alpha=0.5)
+        self.asv_trail, = self.ax_traj.plot([], [], 'b-', lw=1.5, label='ASV Trail', alpha=0.7)
+        self.towfish_trail, = self.ax_traj.plot([], [], 'r-', lw=1.5, label='Towfish Trail', alpha=0.7)
+        self.tether_line, = self.ax_traj.plot([], [], 'gray', lw=2, linestyle=':', alpha=0.6, label='Tether')
         
         # ASV boat shape
         if self.show_boat:
@@ -72,24 +102,44 @@ class LivePlotter(Node):
             ])
             self.asv_boat = Polygon(boat_shape, closed=True, facecolor='blue', 
                                    edgecolor='darkblue', linewidth=2, alpha=0.8)
-            self.ax.add_patch(self.asv_boat)
+            self.ax_traj.add_patch(self.asv_boat)
         else:
             self.asv_boat = None
             
         # Current positions
-        self.asv_marker = self.ax.scatter([], [], c='blue', marker='o', s=150, 
+        self.asv_marker = self.ax_traj.scatter([], [], c='blue', marker='o', s=150, 
                                          edgecolors='darkblue', linewidths=2, 
                                          label='ASV', zorder=10)
-        self.towfish_marker = self.ax.scatter([], [], c='red', marker='x', s=200, 
+        self.towfish_marker = self.ax_traj.scatter([], [], c='red', marker='x', s=200, 
                                              linewidths=3, label='Towfish', zorder=10)
         
-        # Plot settings
-        self.ax.set_xlabel('East [m]', fontsize=12)
-        self.ax.set_ylabel('North [m]', fontsize=12)
-        self.ax.set_title('ASV-Towfish Live Tracking', fontsize=14, fontweight='bold')
-        self.ax.grid(True, alpha=0.3)
-        self.ax.set_aspect('equal', 'box')
-        self.ax.legend(loc='upper right', fontsize=10)
+        # Trajectory plot settings
+        self.ax_traj.set_xlabel('East [m]', fontsize=12)
+        self.ax_traj.set_ylabel('North [m]', fontsize=12)
+        self.ax_traj.set_title('ASV-Towfish Live Tracking', fontsize=14, fontweight='bold')
+        self.ax_traj.grid(True, alpha=0.3)
+        self.ax_traj.set_aspect('equal', 'box')
+        self.ax_traj.legend(loc='upper right', fontsize=9)
+        
+        # === VELOCITY PLOTS ===
+        if self.show_vel_plot:
+            # Y-velocity plot (North - left column)
+            self.v_ref_y_line, = self.ax_vel_y.plot([], [], 'g-', lw=2, label='v_ref_y (LOS)', alpha=0.8)
+            self.tracking_vy_line, = self.ax_vel_y.plot([], [], 'r-', lw=2, label='Tracking Point v_y', alpha=0.8)
+            self.ax_vel_y.set_xlabel('Time [s]', fontsize=10)
+            self.ax_vel_y.set_ylabel('Y Velocity [m/s]', fontsize=10)
+            self.ax_vel_y.set_title('North Velocity Tracking', fontsize=11, fontweight='bold')
+            self.ax_vel_y.grid(True, alpha=0.3)
+            self.ax_vel_y.legend(loc='upper right', fontsize=8)
+            
+            # X-velocity plot (East - right column)
+            self.v_ref_x_line, = self.ax_vel_x.plot([], [], 'g-', lw=2, label='v_ref_x (LOS)', alpha=0.8)
+            self.tracking_vx_line, = self.ax_vel_x.plot([], [], 'r-', lw=2, label='Tracking Point v_x', alpha=0.8)
+            self.ax_vel_x.set_xlabel('Time [s]', fontsize=10)
+            self.ax_vel_x.set_ylabel('X Velocity [m/s]', fontsize=10)
+            self.ax_vel_x.set_title('East Velocity Tracking', fontsize=11, fontweight='bold')
+            self.ax_vel_x.grid(True, alpha=0.3)
+            self.ax_vel_x.legend(loc='upper right', fontsize=8)
         
         plt.tight_layout()
         self.fig.canvas.draw()
@@ -102,6 +152,7 @@ class LivePlotter(Node):
         self.get_logger().info(f'  ASV topic: {asv_topic}')
         self.get_logger().info(f'  Towfish topic: {towfish_topic}')
         self.get_logger().info(f'  Waypoints topic: {waypoints_topic}')
+        self.get_logger().info(f'  V_ref topic: {v_ref_topic}')
         
     def asv_callback(self, msg: Odometry):
         """Process ASV odometry"""
@@ -112,12 +163,84 @@ class LivePlotter(Node):
         qw = msg.pose.pose.orientation.w
         self.asv_heading = 2.0 * math.atan2(qz, qw)
         
+        # Extract ASV velocity in navigation frame
+        self.asv_vel = np.array([msg.twist.twist.linear.x, msg.twist.twist.linear.y])
+        
         self.asv_history.append(self.asv_pos.copy())
+        
+        # Compute tracking point velocity (same method as MRAC)
+        self._compute_tracking_point_velocity(msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9)
         
     def towfish_callback(self, msg: Odometry):
         """Process towfish odometry"""
         self.towfish_pos = np.array([msg.pose.pose.position.x, msg.pose.pose.position.y])
+        
+        # Extract velocity in navigation frame (for reference, not used in tracking)
+        vx = msg.twist.twist.linear.x
+        vy = msg.twist.twist.linear.y
+        self.towfish_vel = np.array([vx, vy])
+        
         self.towfish_history.append(self.towfish_pos.copy())
+        
+        # Update time
+        self.current_time = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        self.time_history.append(self.current_time)
+        
+    def _compute_tracking_point_velocity(self, current_time):
+        """
+        Compute tracking point velocity using MRAC's pendulum model.
+        This is the point at distance epsilon*L from ASV along the tether.
+        
+        Based on MRAC.compute() method:
+        v = asv_vel + epsilon * L * theta_dot * dGamma
+        """
+        if self.asv_pos is None or self.towfish_pos is None or self.asv_vel is None:
+            return
+            
+        # Compute pendulum angle from relative positions
+        dx = self.towfish_pos - self.asv_pos
+        distance = np.linalg.norm(dx)
+        
+        if distance < 1e-6:
+            self.tracking_point_vel = self.asv_vel.copy()
+            self.tracking_vel_history.append(self.tracking_point_vel.copy())
+            return
+            
+        # Pendulum angle (theta) in navigation frame
+        theta = np.arctan2(dx[1], dx[0])
+        
+        # Compute theta_dot using finite differences
+        if self.prev_theta is not None and self.prev_time is not None:
+            dt = current_time - self.prev_time
+            if dt > 1e-6:
+                dtheta = theta - self.prev_theta
+                # Wrap angle difference to [-pi, pi]
+                dtheta = (dtheta + np.pi) % (2 * np.pi) - np.pi
+                theta_dot = dtheta / dt
+            else:
+                theta_dot = 0.0
+        else:
+            theta_dot = 0.0
+            
+        # Update previous values
+        self.prev_theta = theta
+        self.prev_time = current_time
+        
+        # Pendulum basis vector derivative (perpendicular to radial direction)
+        dGamma = np.array([-np.sin(theta), np.cos(theta)])
+        
+        # Tracking point velocity (MRAC's tracked point)
+        # v = asv_vel + epsilon * L * theta_dot * dGamma
+        self.tracking_point_vel = self.asv_vel + self.epsilon * self.L * theta_dot * dGamma
+        
+        # Store in history
+        self.tracking_vel_history.append(self.tracking_point_vel.copy())
+        
+    def v_ref_callback(self, msg: Float64MultiArray):
+        """Process reference velocity from controller"""
+        if len(msg.data) >= 2:
+            self.v_ref = np.array([msg.data[0], msg.data[1]])
+            self.v_ref_history.append(self.v_ref.copy())
         
     def waypoints_callback(self, msg: Float64MultiArray):
         """Process waypoints for path visualization"""
@@ -129,6 +252,7 @@ class LivePlotter(Node):
     def update_plot(self):
         """Update the plot with current data"""
         try:
+            # === UPDATE TRAJECTORY PLOT ===
             # Update reference path
             if self.path_points is not None and len(self.path_points) > 1:
                 self.path_line.set_data(self.path_points[:, 0], self.path_points[:, 1])
@@ -172,7 +296,7 @@ class LivePlotter(Node):
                     [self.asv_pos[1], self.towfish_pos[1]]
                 )
             
-            # Auto-scale view to fit all data
+            # Auto-scale trajectory view
             all_x = []
             all_y = []
             
@@ -192,8 +316,40 @@ class LivePlotter(Node):
             
             if all_x and all_y:
                 margin = 2.0  # meters
-                self.ax.set_xlim(min(all_x) - margin, max(all_x) + margin)
-                self.ax.set_ylim(min(all_y) - margin, max(all_y) + margin)
+                self.ax_traj.set_xlim(min(all_x) - margin, max(all_x) + margin)
+                self.ax_traj.set_ylim(min(all_y) - margin, max(all_y) + margin)
+            
+            # === UPDATE VELOCITY PLOTS ===
+            if self.show_vel_plot and len(self.time_history) > 1:
+                # Sync histories (trim to same length)
+                min_len = min(len(self.time_history), len(self.v_ref_history), len(self.tracking_vel_history))
+                
+                if min_len > 1:
+                    # Get time vector (relative to start)
+                    times = np.array(list(self.time_history))
+                    t0 = times[0]
+                    t_rel = times - t0
+                    
+                    # Get velocity data
+                    v_refs = np.array(list(self.v_ref_history))
+                    tracking_vels = np.array(list(self.tracking_vel_history))
+                    
+                    # Trim to same length
+                    t_rel = t_rel[-min_len:]
+                    v_refs = v_refs[-min_len:]
+                    tracking_vels = tracking_vels[-min_len:]
+                    
+                    # Update X-velocity plot
+                    self.v_ref_x_line.set_data(t_rel, v_refs[:, 0])
+                    self.tracking_vx_line.set_data(t_rel, tracking_vels[:, 0])
+                    self.ax_vel_x.relim()
+                    self.ax_vel_x.autoscale_view()
+                    
+                    # Update Y-velocity plot
+                    self.v_ref_y_line.set_data(t_rel, v_refs[:, 1])
+                    self.tracking_vy_line.set_data(t_rel, tracking_vels[:, 1])
+                    self.ax_vel_y.relim()
+                    self.ax_vel_y.autoscale_view()
             
             self.fig.canvas.draw()
             self.fig.canvas.flush_events()
