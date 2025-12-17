@@ -21,10 +21,10 @@ Waypoints → Path Generator → LOS Guidance → MRAC Controller → Heading Co
 - **Thrust Allocation**: Differential thrust for underactuated ASV
 
 ## Video Showcase
-The following videos demonstrates the project. The tracking shown in these videos is not fenomenal.
-- [Potato Shaped Path](https://youtu.be/pNIBTUkByVg?si=Ot8wUOWTktnUME-A)  
-- [Sinusoidal Path](https://www.youtube.com/watch?v=AeA2Gf_tDqs)
-- [Straight Path](https://youtu.be/S3Da_DntyDQ)
+The following videos demonstrates the project.
+- [Circular Path](https://youtu.be/QxJPO1_ELqk)  
+- [Sinusoidal Path](https://youtu.be/Vrb_MBh5GBo)
+- [Straight Path](https://youtu.be/rfahEI5SZJs)
 
 ## Installation Prerequisites
 The control system is made for use with [Marine Robotics Simulation Framework by Markus Buchholz](https://github.com/markusbuchholz/marine-robotics-sim-framework). It is assumed you have already installed and built this for the installation of the Towing Controller. The installation guide for this codebase will start at the "Run Docker"-step from Marine Robotics Simulation Framework as some alterations are required.
